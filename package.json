@@ -1,0 +1,23 @@
+{
+  "name": "hotel-webscrapping",
+  "version": "1.0.0",
+  "description": "",
+  "main": "new-scraper.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/munikeraragon/Hotel-WebScrapping.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/munikeraragon/Hotel-WebScrapping/issues"
+  },
+  "homepage": "https://github.com/munikeraragon/Hotel-WebScrapping#readme",
+  "dependencies": {
+    "puppeteer": "^24.18.0"
+  }
+}
