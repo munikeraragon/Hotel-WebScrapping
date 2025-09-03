@@ -206,6 +206,44 @@ async function scrapeHotelData() {
             // Continue with scraping even if date selection fails
         }
 
+        // Wait for the results page to load and extract price
+        console.log('Waiting for room pricing to load...');
+        try {
+            // Wait for room pricing elements to appear
+            await page.waitForSelector('.room-footer__price-final', { timeout: 30000 });
+            console.log('Room pricing section found');
+
+            // Extract the price from the room-footer__price-final element
+            const priceData = await page.evaluate(() => {
+                const priceElement = document.querySelector('.room-footer__price-final .room-footer__price-final__content strong');
+                if (priceElement) {
+                    const priceText = priceElement.textContent.trim();
+                    const currencyElement = priceElement.nextElementSibling;
+                    const currency = currencyElement ? currencyElement.textContent.trim() : '';
+                    return {
+                        price: priceText,
+                        currency: currency,
+                        fullPrice: `${priceText} ${currency}`
+                    };
+                }
+                return null;
+            });
+
+            console.log('Extracted price data:', priceData);
+            
+            if (priceData) {
+                console.log(`Found price: ${priceData.fullPrice}`);
+                return priceData.fullPrice;
+            } else {
+                console.log('No price found');
+                return 'Price not found';
+            }
+
+        } catch (error) {
+            console.error('Error extracting price:', error);
+            return 'Error extracting price';
+        }
+
     } catch (error) {
         console.error('Error scraping hotel data:', error);
         throw error;
@@ -217,13 +255,9 @@ async function scrapeHotelData() {
 // Run the scraper
 if (require.main === module) {
     scrapeHotelData()
-        .then((data) => {
+        .then((price) => {
             console.log('\n=== Room Pricing Scraping Complete ===');
-            // console.log(`Dates: ${data.dates}`);
-            // console.log(`Search: ${data.searchCriteria}`);
-            // console.log(`Room options found: ${data.roomPricing?.length || 0}`);
-            // console.log(`Total price: ${data.totalPrice}`);
-            // console.log(`Price per night: ${data.pricePerNight}`);
+            console.log(`Price: ${price}`);
         })
         .catch((error) => {
             console.error('Scraping failed:', error);
