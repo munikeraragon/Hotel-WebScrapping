@@ -119,14 +119,79 @@ async function scrapeHotelData() {
                 await page.waitForSelector('button[type="submit"]', { timeout: 5000 });
                 const searchButton = await page.$('button[type="submit"]');
                 
+                console.log(searchButton)
                 if (searchButton) {
-                    console.log('Found search button, clicking to proceed to next page...');
-                    await searchButton.click();
-                    console.log('Clicked search button - navigating to results page');
+                    // Get the HTML content of the search button
+                    const buttonHTML = await page.evaluate(el => el.outerHTML, searchButton);
+                    console.log('Search button HTML:');
+                    console.log(buttonHTML);
                     
-                    // Wait for navigation to complete
-                    await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 });
-                    console.log('Successfully navigated to search results page');
+                    // Check if button is enabled and visible
+                    const buttonState = await page.evaluate(el => {
+                        const rect = el.getBoundingClientRect();
+                        return {
+                            isVisible: rect.width > 0 && rect.height > 0,
+                            isEnabled: !el.disabled,
+                            hasClickHandler: !!el.onclick,
+                            offsetParent: !!el.offsetParent
+                        };
+                    }, searchButton);
+                    console.log('Button state:', buttonState);
+                    
+                    // Ensure button is clickable
+                    if (!buttonState.isVisible || !buttonState.isEnabled) {
+                        console.log('Button is not clickable, waiting a bit more...');
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+                    }
+                    
+                    console.log('Found search button, clicking to proceed to next page...');
+                    
+                    // Get current URL before clicking
+                    const currentUrl = page.url();
+                    console.log('Current URL before click:', currentUrl);
+                    
+                    // Try multiple click strategies
+                    try {
+                        // Strategy 1: Regular click
+                        await searchButton.click();
+                        console.log('Clicked search button with regular click');
+                    } catch (clickError) {
+                        console.log('Regular click failed, trying JavaScript click...');
+                        // Strategy 2: JavaScript click
+                        await page.evaluate(el => el.click(), searchButton);
+                        console.log('Clicked search button with JavaScript click');
+                    }
+                    
+                    // Wait a moment to see if navigation starts
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    
+                    // Check if URL changed
+                    const newUrl = page.url();
+                    console.log('URL after click:', newUrl);
+                    
+                    if (newUrl !== currentUrl) {
+                        console.log('URL changed, navigation in progress...');
+                        // Wait for navigation to complete
+                        await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 });
+                        console.log('Successfully navigated to search results page');
+                    } else {
+                        console.log('URL did not change, navigation may not have started');
+                        // Try clicking again with more force
+                        console.log('Attempting second click...');
+                        await page.evaluate(el => {
+                            el.scrollIntoView();
+                            el.focus();
+                            el.click();
+                        }, searchButton);
+                        
+                        // Wait for potential navigation
+                        try {
+                            await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 });
+                            console.log('Successfully navigated after second attempt');
+                        } catch (navError) {
+                            console.log('Navigation did not occur after second click attempt');
+                        }
+                    }
                 } else {
                     console.log('Search button not found');
                 }
