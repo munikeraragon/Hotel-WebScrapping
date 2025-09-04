@@ -50,7 +50,8 @@ async function navigateCalendarToMonth(page, targetMonthNumber) {
             11: 'November',
             12: 'December',
             1: 'January',
-            2: 'February'
+            2: 'February',
+            3: 'March'
         };
         
         const targetMonthName = monthNames[targetMonthNumber];
@@ -221,6 +222,7 @@ async function selectDatesOnResultsPage(page, checkInDate, checkOutDate, checkIn
                                   monthNumber === 12 ? 'December' :
                                   monthNumber === 1 ? 'January' :
                                   monthNumber === 2 ? 'February' :
+                                  monthNumber === 3 ? 'March' :
                                   `Month ${monthNumber}`;
             
             for (let i = 0; i < calendarMonths.length; i++) {
@@ -474,24 +476,15 @@ async function scrapeHotelData() {
             console.log('Could not handle cookie consent:', e.message);
         }
 
-        // Calculate Friday to Friday dates (moved outside try block for broader scope)
-        const today = new Date();
-        const currentDay = today.getDay(); // 0 = Sunday, 1 = Monday, ..., 5 = Friday, 6 = Saturday
+        // Get all Friday-to-Friday date pairs for 6 months (September 2025 - February 2026)
+        const allDatePairs = getFridayToFridayDates();
         
-        // Calculate days until this Friday (or today if it's already Friday)
-        let daysUntilFriday = (5 - currentDay + 7) % 7;
-        if (daysUntilFriday === 0 && currentDay !== 5) {
-            daysUntilFriday = 7; // If today is not Friday but calculation gives 0, it means next Friday
-        }
-        
-        // Calculate check-in date (this Friday)
-        const checkInDateObj = new Date(today);
-        checkInDateObj.setDate(today.getDate() + daysUntilFriday);
-        
-        // Calculate check-out date (next Friday, 7 days later)
-        const checkOutDateObj = new Date(checkInDateObj);
-        checkOutDateObj.setDate(checkInDateObj.getDate() + 7);
-         const checkInDate = checkInDateObj.getDate();
+        // Use the first date pair from our 6-month range as the initial search
+        // This prevents duplication and ensures we start with the correct range
+        const firstDatePair = allDatePairs[0];
+        const checkInDateObj = firstDatePair.checkIn;
+        const checkOutDateObj = firstDatePair.checkOut;
+        const checkInDate = checkInDateObj.getDate();
         const checkOutDate = checkOutDateObj.getDate();
         
         console.log(`Check-in: Friday, ${checkInDateObj.toDateString()} (${checkInDate})`);
@@ -642,8 +635,6 @@ async function scrapeHotelData() {
             // Continue with scraping even if date selection fails
         }
 
-        // Get all Friday-to-Friday date pairs for 6 months (September 2025 - February 2026)
-        const allDatePairs = getFridayToFridayDates();
         console.log(`\nFound ${allDatePairs.length} Friday-to-Friday date pairs for 6 months (Sep 2025 - Feb 2026):`);
         
         // Display all date pairs
@@ -651,36 +642,28 @@ async function scrapeHotelData() {
             console.log(`${index + 1}. ${datePair.checkIn.toDateString()} to ${datePair.checkOut.toDateString()}`);
         });
         
-        // Array to store all price results
-        const priceResults = [];
-        
         // Wait for the results page to load and extract first price
         console.log('\n=== GETTING FIRST PRICE ===');
         console.log('Waiting for room pricing to load...');
         
         const firstPrice = await extractPrice(page);
-        console.log(`\nFirst price collected: ${firstPrice}`);
+        console.log(`\nFirst price collected for ${checkInDateObj.toDateString()} to ${checkOutDateObj.toDateString()}: ${firstPrice}`);
         
-        // Now iterate through all the 6-month Friday-to-Friday dates
-        console.log('\n=== COLLECTING PRICES FOR ALL 6-MONTH FRIDAY-TO-FRIDAY DATES ===');
+        // Add the first price to results (Array to store all price results)
+        const priceResults = [{
+            checkIn: checkInDateObj,
+            checkOut: checkOutDateObj,
+            price: firstPrice
+        }];
         
-        for (let i = 0; i < allDatePairs.length; i++) {
+        // Now iterate through the remaining 6-month Friday-to-Friday dates (skip the first one)
+        console.log('\n=== COLLECTING PRICES FOR REMAINING DATES ===');
+        
+        for (let i = 1; i < allDatePairs.length; i++) {
             const datePair = allDatePairs[i];
             console.log(`\n--- Processing date pair ${i + 1}/${allDatePairs.length} ---`);
             console.log(`Check-in: ${datePair.checkIn.toDateString()} (${datePair.checkInDate}/${datePair.checkInMonth})`);
             console.log(`Check-out: ${datePair.checkOut.toDateString()} (${datePair.checkOutDate}/${datePair.checkOutMonth})`);
-            
-            // Skip if this date pair matches the initial search dates (compare full dates, not just day of month)
-            if (datePair.checkIn.getTime() === checkInDateObj.getTime() && datePair.checkOut.getTime() === checkOutDateObj.getTime()) {
-                console.log(`⏭️  Skipping this date pair as it matches the initial search (${checkInDateObj.toDateString()} - ${checkOutDateObj.toDateString()})`);
-                // Still add the price we already collected for this date pair
-                priceResults.push({
-                    checkIn: datePair.checkIn,
-                    checkOut: datePair.checkOut,
-                    price: firstPrice
-                });
-                continue;
-            }
             
             // Select the new dates
             const dateSelectionSuccess = await selectDatesOnResultsPage(page, datePair.checkInDate, datePair.checkOutDate, datePair.checkInMonth, datePair.checkOutMonth);
