@@ -1,45 +1,198 @@
 const puppeteer = require('puppeteer');
 const fs = require('fs').promises;
 
-// Helper function to get all Friday-to-Friday date pairs for September 2025
-function getFridayToFridayDates() {
-    const dates = [];
-    const startDate = new Date(2025, 8, 1); // September 1, 2025 (month is 0-indexed)
-    const endDate = new Date(2025, 8, 30); // September 30, 2025
-    
-    // Find the first Friday in September 2025
-    let currentDate = new Date(startDate);
-    while (currentDate.getDay() !== 5) { // 5 = Friday
-        currentDate.setDate(currentDate.getDate() + 1);
-    }
-    
-    // Generate all Friday-to-Friday pairs for September
-    while (currentDate <= endDate) {
-        const checkIn = new Date(currentDate);
-        const checkOut = new Date(currentDate);
-        checkOut.setDate(checkOut.getDate() + 7); // Next Friday
+// Function to navigate to next month in calendar
+async function navigateToNextMonth(page) {
+    try {
+        console.log('Navigating to next month...');
         
-        // Only include if both dates are in September or check-out is in early October
-        if (checkIn.getMonth() === 8) { // September
+        // Wait for the next month button to be available
+        await page.waitForSelector('.riu-datepicker__header--button:not(.riu-datepicker__header--button-hidden) button', { timeout: 5000 });
+        
+        // Find the next month button (right arrow) - only visible ones
+        const nextMonthButton = await page.$('.riu-datepicker__header--button:not(.riu-datepicker__header--button-hidden) button[arialabel="Mes siguiente"]');
+        
+        if (nextMonthButton) {
+            console.log('Found next month button, clicking...');
+            
+            // Try clicking the button
+            try {
+                await nextMonthButton.click();
+                console.log('✓ Successfully navigated to next month');
+            } catch (clickError) {
+                console.log('Regular click failed, trying JavaScript click...');
+                await page.evaluate(el => el.click(), nextMonthButton);
+                console.log('✓ JavaScript clicked next month button');
+            }
+            
+            // Wait for the calendar to update
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            return true;
+        } else {
+            console.log('Next month button not found');
+            return false;
+        }
+    } catch (error) {
+        console.error('Error navigating to next month:', error);
+        return false;
+    }
+}
+
+// Function to navigate to a specific month/year in calendar
+async function navigateToTargetMonth(page, targetMonth, targetYear) {
+    try {
+        console.log(`Navigating to ${targetMonth}/${targetYear}...`);
+        
+        // Get current month/year displayed in calendar
+        const getCurrentMonth = async () => {
+            // Try to get the month from the rightmost (active) calendar first
+            const monthElements = await page.$$('.riu-datepicker__header--selection strong');
+            
+            // Check each month element to find the one with visible navigation
+            for (let i = monthElements.length - 1; i >= 0; i--) {
+                const monthElement = monthElements[i];
+                const monthText = await page.evaluate(el => el.textContent, monthElement);
+                console.log(`Checking calendar: ${monthText}`);
+                
+                // Parse month/year from text (format varies, might be "September 2025" or similar)
+                const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
+                                 'July', 'August', 'September', 'October', 'November', 'December'];
+                
+                for (let j = 0; j < monthNames.length; j++) {
+                    if (monthText.includes(monthNames[j])) {
+                        const year = parseInt(monthText.match(/\d{4}/)?.[0] || new Date().getFullYear());
+                        
+                        // Find the parent article container
+                        const parentArticle = await monthElement.evaluateHandle(el => {
+                            let parent = el;
+                            while (parent && parent.tagName !== 'ARTICLE') {
+                                parent = parent.parentElement;
+                            }
+                            return parent;
+                        });
+                        
+                        if (parentArticle) {
+                            const hasVisibleNextButton = await parentArticle.evaluate(article => {
+                                const nextButton = article.querySelector('.riu-datepicker__header--button:not(.riu-datepicker__header--button-hidden) button[arialabel="Mes siguiente"]');
+                                return !!nextButton;
+                            });
+                            
+                            console.log(`Calendar ${monthNames[j]} ${year} has visible next button: ${hasVisibleNextButton}`);
+                            
+                            // If this calendar has a visible next button, use this month
+                            if (hasVisibleNextButton) {
+                                console.log(`Found active calendar showing: ${monthNames[j]} ${year}`);
+                                return { month: j, year: year };
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Fallback to current date if no active calendar found
+            const now = new Date();
+            console.log('No active calendar found, using current date as fallback');
+            return { month: now.getMonth(), year: now.getFullYear() };
+        };
+        
+        let currentCalendar = await getCurrentMonth();
+        console.log(`Current calendar shows: ${currentCalendar.month}/${currentCalendar.year}`);
+        
+        // Calculate how many months to navigate forward
+        const monthsToNavigate = (targetYear - currentCalendar.year) * 12 + (targetMonth - currentCalendar.month);
+        
+        console.log(`Need to navigate ${monthsToNavigate} months (from ${currentCalendar.month}/${currentCalendar.year} to ${targetMonth}/${targetYear})`);
+        
+        if (monthsToNavigate < 0) {
+            console.log('Target month is in the past relative to current active calendar');
+            // If target is in the past, we might need to reset calendar or handle differently
+            // For now, we'll assume the calendar is already showing the correct month
+            return true;
+        }
+        
+        if (monthsToNavigate === 0) {
+            console.log('Already on target month');
+            return true;
+        }
+        
+        // Navigate forward month by month
+        for (let i = 0; i < monthsToNavigate; i++) {
+            const success = await navigateToNextMonth(page);
+            if (!success) {
+                console.log(`Failed to navigate forward ${i + 1} months`);
+                return false;
+            }
+            
+            // Small delay between navigations
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        
+        console.log(`✓ Successfully navigated to ${targetMonth}/${targetYear}`);
+        return true;
+    } catch (error) {
+        console.error('Error navigating to target month:', error);
+        return false;
+    }
+}
+
+// Helper function to get all Friday-to-Friday date pairs for the next 6 months
+function getFridayToFridayDatesFor6Months() {
+    const dates = [];
+    const today = new Date();
+    
+    // Start from the current month
+    const startMonth = today.getMonth();
+    const startYear = today.getFullYear();
+    
+    // Generate dates for the next 6 months
+    for (let monthOffset = 0; monthOffset < 6; monthOffset++) {
+        const currentMonth = (startMonth + monthOffset) % 12;
+        const currentYear = startYear + Math.floor((startMonth + monthOffset) / 12);
+        
+        // Get first and last day of the current month
+        const firstDayOfMonth = new Date(currentYear, currentMonth, 1);
+        const lastDayOfMonth = new Date(currentYear, currentMonth + 1, 0);
+        
+        // Find the first Friday in this month
+        let currentDate = new Date(firstDayOfMonth);
+        while (currentDate.getDay() !== 5) { // 5 = Friday
+            currentDate.setDate(currentDate.getDate() + 1);
+            // If we've gone past the end of the month, skip this month
+            if (currentDate > lastDayOfMonth) {
+                break;
+            }
+        }
+        
+        // Generate all Friday-to-Friday pairs for this month
+        while (currentDate <= lastDayOfMonth) {
+            const checkIn = new Date(currentDate);
+            const checkOut = new Date(currentDate);
+            checkOut.setDate(checkOut.getDate() + 7); // Next Friday
+            
+            // Include the date pair regardless of which month check-out falls in
             dates.push({
                 checkIn: checkIn,
                 checkOut: checkOut,
                 checkInDate: checkIn.getDate(),
-                checkOutDate: checkOut.getDate()
+                checkOutDate: checkOut.getDate(),
+                checkInMonth: checkIn.getMonth(),
+                checkOutMonth: checkOut.getMonth(),
+                monthName: checkIn.toLocaleString('default', { month: 'long', year: 'numeric' })
             });
+            
+            // Move to next Friday
+            currentDate.setDate(currentDate.getDate() + 7);
         }
-        
-        // Move to next Friday
-        currentDate.setDate(currentDate.getDate() + 7);
     }
     
     return dates;
 }
 
 // Function to interact with the new calendar on results page
-async function selectDatesOnResultsPage(page, checkInDate, checkOutDate) {
+async function selectDatesOnResultsPage(page, checkInDate, checkOutDate, checkInMonth, checkOutMonth) {
     try {
-        console.log(`\nSelecting new dates: Check-in ${checkInDate}, Check-out ${checkOutDate}`);
+        console.log(`\nSelecting new dates: Check-in ${checkInDate} (month ${checkInMonth}), Check-out ${checkOutDate} (month ${checkOutMonth})`);
         
         // Click on the date picker input to open the new calendar
         await page.waitForSelector('#datepicker-field', { timeout: 10000 });
@@ -49,6 +202,17 @@ async function selectDatesOnResultsPage(page, checkInDate, checkOutDate) {
         // Wait for the new calendar to appear (different selector for new calendar)
         await page.waitForSelector('.riu-datepicker__content--days-group', { timeout: 5000 });
         console.log('New calendar opened');
+        
+        // Navigate to the correct month for check-in
+        const today = new Date();
+        const currentYear = today.getFullYear();
+        const targetYear = checkInMonth < today.getMonth() ? currentYear + 1 : currentYear;
+        
+        const navigateSuccess = await navigateToTargetMonth(page, checkInMonth, targetYear);
+        if (!navigateSuccess) {
+            console.log(`Failed to navigate to target month ${checkInMonth}/${targetYear}`);
+            return false;
+        }
         
         // Function to click a specific date in the new calendar
         const clickDateInNewCalendar = async (day) => {
@@ -102,6 +266,16 @@ async function selectDatesOnResultsPage(page, checkInDate, checkOutDate) {
         }
         
         await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        // Navigate to check-out month if different from check-in month
+        if (checkOutMonth !== checkInMonth) {
+            const checkOutYear = checkOutMonth < checkInMonth ? targetYear + 1 : targetYear;
+            const navigateToCheckOutSuccess = await navigateToTargetMonth(page, checkOutMonth, checkOutYear);
+            if (!navigateToCheckOutSuccess) {
+                console.log(`Failed to navigate to check-out month ${checkOutMonth}/${checkOutYear}`);
+                return false;
+            }
+        }
         
         // Select check-out date
         console.log(`Attempting to select check-out date: ${checkOutDate}`);
@@ -432,13 +606,25 @@ async function scrapeHotelData() {
             // Continue with scraping even if date selection fails
         }
 
-        // Get all Friday-to-Friday date pairs for September 2025
-        const allDatePairs = getFridayToFridayDates();
-        console.log(`\nFound ${allDatePairs.length} Friday-to-Friday date pairs for September 2025:`);
+        // Get all Friday-to-Friday date pairs for the next 6 months
+        const allDatePairs = getFridayToFridayDatesFor6Months();
+        console.log(`\nFound ${allDatePairs.length} Friday-to-Friday date pairs for the next 6 months:`);
         
-        // Display all date pairs
+        // Group by month for better display
+        const datesByMonth = {};
         allDatePairs.forEach((datePair, index) => {
-            console.log(`${index + 1}. ${datePair.checkIn.toDateString()} to ${datePair.checkOut.toDateString()}`);
+            if (!datesByMonth[datePair.monthName]) {
+                datesByMonth[datePair.monthName] = [];
+            }
+            datesByMonth[datePair.monthName].push(datePair);
+        });
+        
+        // Display all date pairs grouped by month
+        Object.keys(datesByMonth).forEach(monthName => {
+            console.log(`\n${monthName}:`);
+            datesByMonth[monthName].forEach((datePair, index) => {
+                console.log(`  ${index + 1}. ${datePair.checkIn.toDateString()} to ${datePair.checkOut.toDateString()}`);
+            });
         });
         
         // Array to store all price results
@@ -451,17 +637,19 @@ async function scrapeHotelData() {
         const firstPrice = await extractPrice(page);
         console.log(`\nFirst price collected: ${firstPrice}`);
         
-        // Now iterate through all the September Friday-to-Friday dates
-        console.log('\n=== COLLECTING PRICES FOR ALL SEPTEMBER FRIDAY-TO-FRIDAY DATES ===');
+        // Now iterate through all the Friday-to-Friday dates for the next 6 months
+        console.log('\n=== COLLECTING PRICES FOR ALL FRIDAY-TO-FRIDAY DATES (6 MONTHS) ===');
         
         for (let i = 0; i < allDatePairs.length; i++) {
             const datePair = allDatePairs[i];
             console.log(`\n--- Processing date pair ${i + 1}/${allDatePairs.length} ---`);
             console.log(`Check-in: ${datePair.checkIn.toDateString()} (${datePair.checkInDate})`);
             console.log(`Check-out: ${datePair.checkOut.toDateString()} (${datePair.checkOutDate})`);
+            console.log(`Month: ${datePair.monthName}`);
             
             // Skip if this date pair matches the initial search dates
-            if (datePair.checkInDate === checkInDate && datePair.checkOutDate === checkOutDate) {
+            if (datePair.checkInDate === checkInDate && datePair.checkOutDate === checkOutDate && 
+                datePair.checkInMonth === checkInDateObj.getMonth()) {
                 console.log(`⏭️  Skipping this date pair as it matches the initial search (${checkInDate}-${checkOutDate})`);
                 // Still add the price we already collected for this date pair
                 priceResults.push({
@@ -472,8 +660,14 @@ async function scrapeHotelData() {
                 continue;
             }
             
-            // Select the new dates
-            const dateSelectionSuccess = await selectDatesOnResultsPage(page, datePair.checkInDate, datePair.checkOutDate);
+            // Select the new dates with month navigation
+            const dateSelectionSuccess = await selectDatesOnResultsPage(
+                page, 
+                datePair.checkInDate, 
+                datePair.checkOutDate, 
+                datePair.checkInMonth, 
+                datePair.checkOutMonth
+            );
             
             if (dateSelectionSuccess) {
                 // Extract the price for this date pair
