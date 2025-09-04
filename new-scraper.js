@@ -1,11 +1,11 @@
 const puppeteer = require('puppeteer');
 const fs = require('fs').promises;
 
-// Helper function to get all Friday-to-Friday date pairs for September and October 2025
+// Helper function to get all Friday-to-Friday date pairs for 6 months (September 2025 - February 2026)
 function getFridayToFridayDates() {
     const dates = [];
     const startDate = new Date(2025, 8, 1); // September 1, 2025 (month is 0-indexed)
-    const endDate = new Date(2025, 9, 31); // October 31, 2025
+    const endDate = new Date(2026, 1, 28); // February 28, 2026
     
     // Find the first Friday in September 2025
     let currentDate = new Date(startDate);
@@ -13,14 +13,15 @@ function getFridayToFridayDates() {
         currentDate.setDate(currentDate.getDate() + 1);
     }
     
-    // Generate all Friday-to-Friday pairs for September and October
+    // Generate all Friday-to-Friday pairs for 6 months
     while (currentDate <= endDate) {
         const checkIn = new Date(currentDate);
         const checkOut = new Date(currentDate);
         checkOut.setDate(checkOut.getDate() + 7); // Next Friday
         
-        // Include if check-in is in September or October
-        if (checkIn.getMonth() === 8 || checkIn.getMonth() === 9) { // September or October
+        // Include if check-in is within our 6-month range (September 2025 - February 2026)
+        if ((checkIn.getFullYear() === 2025 && checkIn.getMonth() >= 8) || 
+            (checkIn.getFullYear() === 2026 && checkIn.getMonth() <= 1)) {
             dates.push({
                 checkIn: checkIn,
                 checkOut: checkOut,
@@ -38,27 +39,106 @@ function getFridayToFridayDates() {
     return dates;
 }
 
-// Helper function to ensure the calendar is showing September and October
-async function ensureCorrectMonthsVisible(page) {
+// Helper function to navigate calendar to show a specific month
+async function navigateCalendarToMonth(page, targetMonthNumber) {
     try {
-        // Check if both September and October are visible
+        console.log(`Navigating calendar to show month ${targetMonthNumber}`);
+        
+        const monthNames = {
+            9: 'September',
+            10: 'October', 
+            11: 'November',
+            12: 'December',
+            1: 'January',
+            2: 'February'
+        };
+        
+        const targetMonthName = monthNames[targetMonthNumber];
+        if (!targetMonthName) {
+            console.log(`Unknown month number: ${targetMonthNumber}`);
+            return false;
+        }
+        
+        // Check if target month is already visible
+        let monthHeaders = await page.$$eval('.riu-datepicker__header--selection strong', 
+            elements => elements.map(el => el.textContent.trim())
+        );
+        
+        console.log('Current months before navigation:', monthHeaders);
+        
+        // If target month is already visible, we're good
+        if (monthHeaders.some(month => month.includes(targetMonthName))) {
+            console.log(`✓ ${targetMonthName} is already visible`);
+            return true;
+        }
+        
+        // Navigate forward to find the target month (max 6 attempts to avoid infinite loop)
+        let attempts = 0;
+        const maxAttempts = 6;
+        
+        while (attempts < maxAttempts) {
+            // Check if we can navigate forward
+            const rightArrows = await page.$$('button[arialabel="Mes siguiente"]:not([disabled])');
+            if (rightArrows.length === 0) {
+                console.log('No forward navigation button available');
+                break;
+            }
+            
+            console.log(`Navigation attempt ${attempts + 1}: Clicking right arrow`);
+            await rightArrows[0].click();
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            // Check if target month is now visible
+            monthHeaders = await page.$$eval('.riu-datepicker__header--selection strong', 
+                elements => elements.map(el => el.textContent.trim())
+            );
+            
+            console.log('Months after navigation:', monthHeaders);
+            
+            if (monthHeaders.some(month => month.includes(targetMonthName))) {
+                console.log(`✓ Successfully navigated to ${targetMonthName}`);
+                return true;
+            }
+            
+            attempts++;
+        }
+        
+        console.log(`Could not navigate to ${targetMonthName} after ${attempts} attempts`);
+        return false;
+        
+    } catch (error) {
+        console.log('Error navigating calendar:', error);
+        return false;
+    }
+}
+
+// Helper function to navigate calendar to show the desired months
+async function ensureCorrectMonthsVisible(page, targetMonth1 = null, targetMonth2 = null) {
+    try {
+        // Get current visible months
         const monthHeaders = await page.$$eval('.riu-datepicker__header--selection strong', 
             elements => elements.map(el => el.textContent.trim())
         );
         
         console.log('Current visible months:', monthHeaders);
         
-        // Check if we have September and October visible
-        const hasSeptember = monthHeaders.some(month => month.includes('September 2025'));
-        const hasOctober = monthHeaders.some(month => month.includes('October 2025'));
+        // If no specific months requested, just return true (keep current calendar state)
+        if (!targetMonth1 && !targetMonth2) {
+            console.log('No specific months requested, keeping current calendar state');
+            return true;
+        }
         
-        if (hasSeptember && hasOctober) {
-            console.log('✓ Both September and October are visible');
+        // Check if target months are visible
+        const hasTargetMonth1 = targetMonth1 ? monthHeaders.some(month => month.includes(targetMonth1)) : true;
+        const hasTargetMonth2 = targetMonth2 ? monthHeaders.some(month => month.includes(targetMonth2)) : true;
+        
+        if (hasTargetMonth1 && hasTargetMonth2) {
+            console.log(`✓ Target months are visible: ${targetMonth1 || 'Any'}, ${targetMonth2 || 'Any'}`);
             return true;
         }
         
         // If not both months are visible, we might need to navigate
-        console.log('Need to navigate to show September and October');
+        console.log(`Need to navigate to show target months: ${targetMonth1 || 'Any'}, ${targetMonth2 || 'Any'}`);
         
         // Try clicking the right arrow to navigate if needed
         const rightArrows = await page.$$('button[arialabel="Mes siguiente"]:not([disabled])');
@@ -102,7 +182,13 @@ async function selectDatesOnResultsPage(page, checkInDate, checkOutDate, checkIn
         const clickDateInNewCalendar = async (day, monthNumber) => {
             console.log(`Looking for day ${day} in month ${monthNumber}`);
             
-            // Get all calendar containers (September on left, October on right)
+            // First, ensure the target month is visible by navigating if needed
+            const navigationSuccess = await navigateCalendarToMonth(page, monthNumber);
+            if (!navigationSuccess) {
+                console.log(`Failed to navigate to month ${monthNumber}, trying to continue anyway...`);
+            }
+            
+            // Get all calendar containers
             const calendarArticles = await page.$$('.riu-datepicker > article');
             
             if (calendarArticles.length < 2) {
@@ -132,6 +218,9 @@ async function selectDatesOnResultsPage(page, checkInDate, checkOutDate, checkIn
             const targetMonthName = monthNumber === 9 ? 'September' : 
                                   monthNumber === 10 ? 'October' : 
                                   monthNumber === 11 ? 'November' : 
+                                  monthNumber === 12 ? 'December' :
+                                  monthNumber === 1 ? 'January' :
+                                  monthNumber === 2 ? 'February' :
                                   `Month ${monthNumber}`;
             
             for (let i = 0; i < calendarMonths.length; i++) {
@@ -553,9 +642,9 @@ async function scrapeHotelData() {
             // Continue with scraping even if date selection fails
         }
 
-        // Get all Friday-to-Friday date pairs for September and October 2025
+        // Get all Friday-to-Friday date pairs for 6 months (September 2025 - February 2026)
         const allDatePairs = getFridayToFridayDates();
-        console.log(`\nFound ${allDatePairs.length} Friday-to-Friday date pairs for September and October 2025:`);
+        console.log(`\nFound ${allDatePairs.length} Friday-to-Friday date pairs for 6 months (Sep 2025 - Feb 2026):`);
         
         // Display all date pairs
         allDatePairs.forEach((datePair, index) => {
@@ -572,8 +661,8 @@ async function scrapeHotelData() {
         const firstPrice = await extractPrice(page);
         console.log(`\nFirst price collected: ${firstPrice}`);
         
-        // Now iterate through all the September and October Friday-to-Friday dates
-        console.log('\n=== COLLECTING PRICES FOR ALL SEPTEMBER AND OCTOBER FRIDAY-TO-FRIDAY DATES ===');
+        // Now iterate through all the 6-month Friday-to-Friday dates
+        console.log('\n=== COLLECTING PRICES FOR ALL 6-MONTH FRIDAY-TO-FRIDAY DATES ===');
         
         for (let i = 0; i < allDatePairs.length; i++) {
             const datePair = allDatePairs[i];
@@ -581,9 +670,9 @@ async function scrapeHotelData() {
             console.log(`Check-in: ${datePair.checkIn.toDateString()} (${datePair.checkInDate}/${datePair.checkInMonth})`);
             console.log(`Check-out: ${datePair.checkOut.toDateString()} (${datePair.checkOutDate}/${datePair.checkOutMonth})`);
             
-            // Skip if this date pair matches the initial search dates
-            if (datePair.checkInDate === checkInDate && datePair.checkOutDate === checkOutDate) {
-                console.log(`⏭️  Skipping this date pair as it matches the initial search (${checkInDate}-${checkOutDate})`);
+            // Skip if this date pair matches the initial search dates (compare full dates, not just day of month)
+            if (datePair.checkIn.getTime() === checkInDateObj.getTime() && datePair.checkOut.getTime() === checkOutDateObj.getTime()) {
+                console.log(`⏭️  Skipping this date pair as it matches the initial search (${checkInDateObj.toDateString()} - ${checkOutDateObj.toDateString()})`);
                 // Still add the price we already collected for this date pair
                 priceResults.push({
                     checkIn: datePair.checkIn,
