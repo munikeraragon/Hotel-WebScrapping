@@ -493,8 +493,29 @@ async function scrapeHotelData() {
 
         // Handle discount modals that may appear after cookie acceptance
         console.log('Checking for discount modals...');
+        let couponData = null;
         try {
             await new Promise(resolve => setTimeout(resolve, 1000)); // Wait for potential modal to appear
+            
+            // Check for RIU Class Loyalty Sale modal
+            const modalContent = await page.$('.dy-modal-content');
+            if (modalContent) {
+                const title = await page.$eval('#dy-modal-title', el => el.textContent.trim()).catch(() => '');
+                const message = await page.$eval('#dy-modal-message', el => el.textContent.trim()).catch(() => '');
+                
+                // Extract discount percentage and promo code from message
+                const discountMatch = message.match(/(\d+)%\s*off/i);
+                const promoMatch = message.match(/promo code\s+([A-Z0-9]+)/i);
+                
+                couponData = {
+                    title: title,
+                    discount: discountMatch ? discountMatch[1] + '% off' : 'Unknown discount',
+                    promoCode: promoMatch ? promoMatch[1] : 'No promo code found',
+                    fullMessage: message
+                };
+                
+                console.log('🎟️ COUPON DETECTED:', couponData);
+            }
             
             // Click outside any modal to dismiss it
             await page.click('body', { delay: 100 });
@@ -792,11 +813,17 @@ async function scrapeHotelData() {
         
         // Display final results
         console.log('\n=== FINAL PRICE SUMMARY ===');
+        if (couponData) {
+            console.log('🎟️ COUPON OFFER:', `${couponData.discount} with code: ${couponData.promoCode}`);
+        }
         priceResults.forEach((result, index) => {
             console.log(`${index + 1}. ${result.checkIn.toDateString()} to ${result.checkOut.toDateString()}: ${result.price}`);
         });
         
-        return priceResults;
+        return { 
+            prices: priceResults, 
+            coupon: couponData 
+        };
 
     } catch (error) {
         console.error('Error scraping hotel data:', error);
@@ -809,15 +836,18 @@ async function scrapeHotelData() {
 // Run the scraper
 if (require.main === module) {
     scrapeHotelData()
-        .then((priceResults) => {
+        .then((results) => {
             console.log('\n=== HOTEL PRICING SCRAPING COMPLETE ===');
-            if (Array.isArray(priceResults)) {
-                console.log(`Collected ${priceResults.length} price points:`);
-                priceResults.forEach((result, index) => {
+            if (results.coupon) {
+                console.log(`🎟️ COUPON FOUND: ${results.coupon.discount} with code: ${results.coupon.promoCode}`);
+            }
+            if (Array.isArray(results.prices)) {
+                console.log(`Collected ${results.prices.length} price points:`);
+                results.prices.forEach((result, index) => {
                     console.log(`${index + 1}. ${result.checkIn.toDateString()} to ${result.checkOut.toDateString()}: ${result.price}`);
                 });
             } else {
-                console.log(`Single price result: ${priceResults}`);
+                console.log(`Single price result: ${results}`);
             }
         })
         .catch((error) => {
