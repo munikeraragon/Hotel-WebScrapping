@@ -1,13 +1,15 @@
 const puppeteer = require('puppeteer');
 const fs = require('fs').promises;
 
-// Helper function to get all Friday-to-Friday date pairs for 6 months (September 2025 - February 2026)
+// Helper function to get all Friday-to-Friday date pairs for 6 months from today
 function getFridayToFridayDates() {
     const dates = [];
-    const startDate = new Date(2025, 8, 1); // September 1, 2025 (month is 0-indexed)
-    const endDate = new Date(2026, 1, 28); // February 28, 2026
+    const today = new Date();
+    const startDate = new Date(today); // Start from today
+    const endDate = new Date(today);
+    endDate.setMonth(endDate.getMonth() + 6); // 6 months from today
     
-    // Find the first Friday in September 2025
+    // Find the first Friday from start date
     let currentDate = new Date(startDate);
     while (currentDate.getDay() !== 5) { // 5 = Friday
         currentDate.setDate(currentDate.getDate() + 1);
@@ -19,9 +21,8 @@ function getFridayToFridayDates() {
         const checkOut = new Date(currentDate);
         checkOut.setDate(checkOut.getDate() + 7); // Next Friday
         
-        // Include if check-in is within our 6-month range (September 2025 - February 2026)
-        if ((checkIn.getFullYear() === 2025 && checkIn.getMonth() >= 8) || 
-            (checkIn.getFullYear() === 2026 && checkIn.getMonth() <= 1)) {
+        // Include if check-in is within our 6-month range from today
+        if (checkIn <= endDate) {
             dates.push({
                 checkIn: checkIn,
                 checkOut: checkOut,
@@ -45,13 +46,18 @@ async function navigateCalendarToMonth(page, targetMonthNumber) {
         console.log(`Navigating calendar to show month ${targetMonthNumber}`);
         
         const monthNames = {
+            1: 'January',
+            2: 'February', 
+            3: 'March',
+            4: 'April',
+            5: 'May',
+            6: 'June',
+            7: 'July',
+            8: 'August',
             9: 'September',
             10: 'October', 
             11: 'November',
-            12: 'December',
-            1: 'January',
-            2: 'February',
-            3: 'March'
+            12: 'December'
         };
         
         const targetMonthName = monthNames[targetMonthNumber];
@@ -183,6 +189,22 @@ async function selectDatesOnResultsPage(page, checkInDate, checkOutDate, checkIn
         const clickDateInNewCalendar = async (day, monthNumber) => {
             console.log(`Looking for day ${day} in month ${monthNumber}`);
             
+            // Define monthNames locally within this function
+            const monthNames = {
+                1: 'January',
+                2: 'February', 
+                3: 'March',
+                4: 'April',
+                5: 'May',
+                6: 'June',
+                7: 'July',
+                8: 'August',
+                9: 'September',
+                10: 'October', 
+                11: 'November',
+                12: 'December'
+            };
+            
             // First, ensure the target month is visible by navigating if needed
             const navigationSuccess = await navigateCalendarToMonth(page, monthNumber);
             if (!navigationSuccess) {
@@ -216,14 +238,7 @@ async function selectDatesOnResultsPage(page, checkInDate, checkOutDate, checkIn
             let calendarIndex = 0; // Default to left calendar
             
             // Look for the calendar that contains our target month
-            const targetMonthName = monthNumber === 9 ? 'September' : 
-                                  monthNumber === 10 ? 'October' : 
-                                  monthNumber === 11 ? 'November' : 
-                                  monthNumber === 12 ? 'December' :
-                                  monthNumber === 1 ? 'January' :
-                                  monthNumber === 2 ? 'February' :
-                                  monthNumber === 3 ? 'March' :
-                                  `Month ${monthNumber}`;
+            const targetMonthName = monthNames[monthNumber] || `Month ${monthNumber}`;
             
             for (let i = 0; i < calendarMonths.length; i++) {
                 if (calendarMonths[i].includes(targetMonthName)) {
@@ -476,7 +491,21 @@ async function scrapeHotelData() {
             console.log('Could not handle cookie consent:', e.message);
         }
 
-        // Get all Friday-to-Friday date pairs for 6 months (September 2025 - February 2026)
+        // Handle discount modals that may appear after cookie acceptance
+        console.log('Checking for discount modals...');
+        try {
+            await new Promise(resolve => setTimeout(resolve, 1000)); // Wait for potential modal to appear
+            
+            // Click outside any modal to dismiss it
+            await page.click('body', { delay: 100 });
+            console.log('Clicked outside to dismiss any discount modals');
+            
+            await new Promise(resolve => setTimeout(resolve, 1000)); // Wait for modal to disappear
+        } catch (e) {
+            console.log('Could not handle discount modal:', e.message);
+        }
+
+        // Get all Friday-to-Friday date pairs for 6 months from today
         const allDatePairs = getFridayToFridayDates();
         
         // Use the first date pair from our 6-month range as the initial search
@@ -493,17 +522,87 @@ async function scrapeHotelData() {
         // Handle date selection
         console.log('Setting up date selection...');
         try {
-            // Wait for the date picker to be available
-            await page.waitForSelector('#search-bar-datepicker_input', { timeout: 10000 });
-            console.log('Date picker input found');
+            // Wait for the date picker to be available - try multiple selectors
+            console.log('Looking for date picker input...');
+            let datePickerInput = null;
+            
+            // Try different selectors for the date picker
+            const selectors = [
+                '#search-bar-datepicker_input',
+                'input[id="search-bar-datepicker_input"]',
+                '.riu-ui-calendar__field input',
+                'input[placeholder*="Select the dates"]'
+            ];
+            
+            for (const selector of selectors) {
+                try {
+                    await page.waitForSelector(selector, { timeout: 3000 });
+                    datePickerInput = await page.$(selector);
+                    if (datePickerInput) {
+                        console.log(`Date picker input found with selector: ${selector}`);
+                        break;
+                    }
+                } catch (e) {
+                    console.log(`Selector ${selector} not found, trying next...`);
+                }
+            }
+            
+            if (!datePickerInput) {
+                throw new Error('Could not find date picker input with any selector');
+            }
 
             // Click on the date input to open the calendar
-            await page.click('#search-bar-datepicker_input');
-            console.log('Clicked date input to open calendar');
+            console.log('Clicking date input to open calendar...');
+            
+            // Try clicking the calendar icon first
+            try {
+                const calendarIcon = await page.$('.riu-ui-calendar .riu-ui-icon i.icon-calendar');
+                if (calendarIcon) {
+                    console.log('Found calendar icon, clicking it...');
+                    await calendarIcon.click();
+                } else {
+                    await datePickerInput.click();
+                }
+            } catch (e) {
+                console.log('Calendar icon not found, clicking input field...');
+                await datePickerInput.click();
+            }
+            
+            // Wait a moment for the calendar to start opening
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            // Try to click again if calendar hasn't opened
+            try {
+                await page.waitForSelector('.riu-ui-calendar', { timeout: 2000 });
+                console.log('Calendar opened on first click');
+            } catch (e) {
+                console.log('Calendar not opened on first click, trying again...');
+                await datePickerInput.click();
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
 
-            // Wait for calendar to appear
-            await page.waitForSelector('.riu-ui-calendar', { timeout: 5000 });
-            console.log('Calendar opened');
+            // Wait for calendar to appear with multiple possible selectors
+            const calendarSelectors = [
+                '.riu-ui-calendar',
+                '.riu-ui-calendar__content',
+                '.riu-ui-calendar__item--day'
+            ];
+            
+            let calendarFound = false;
+            for (const selector of calendarSelectors) {
+                try {
+                    await page.waitForSelector(selector, { timeout: 3000 });
+                    console.log(`Calendar found with selector: ${selector}`);
+                    calendarFound = true;
+                    break;
+                } catch (e) {
+                    console.log(`Calendar selector ${selector} not found, trying next...`);
+                }
+            }
+            
+            if (!calendarFound) {
+                throw new Error('Calendar did not open after clicking date input');
+            }
 
             console.log(`Check-in: Friday, ${checkInDateObj.toDateString()} (${checkInDate})`);
             console.log(`Check-out: Friday, ${checkOutDateObj.toDateString()} (${checkOutDate})`);
@@ -635,7 +734,7 @@ async function scrapeHotelData() {
             // Continue with scraping even if date selection fails
         }
 
-        console.log(`\nFound ${allDatePairs.length} Friday-to-Friday date pairs for 6 months (Sep 2025 - Feb 2026):`);
+        console.log(`\nFound ${allDatePairs.length} Friday-to-Friday date pairs for 6 months from today:`);
         
         // Display all date pairs
         allDatePairs.forEach((datePair, index) => {

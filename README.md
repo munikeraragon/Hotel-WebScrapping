@@ -3,5 +3,5 @@ Install
     npm init -y
     npm install puppeteer
 
-Coman to run
+Command to run
     node new-scraper.js
