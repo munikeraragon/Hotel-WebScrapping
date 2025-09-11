@@ -662,6 +662,24 @@ async function scrapeHotelData() {
             // Wait for the date selection to be processed
             await new Promise(resolve => setTimeout(resolve, 2000));
 
+            // Enter promo code if one was detected from the modal
+            if (couponData && couponData.promoCode && couponData.promoCode !== 'No promo code found') {
+                console.log(`Entering promo code: ${couponData.promoCode}`);
+                try {
+                    const promoInput = await page.$('#search-bar-code');
+                    if (promoInput) {
+                        await promoInput.click();
+                        await promoInput.type(couponData.promoCode);
+                        console.log(`✓ Entered promo code: ${couponData.promoCode}`);
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                    } else {
+                        console.log('Promo code input field not found');
+                    }
+                } catch (error) {
+                    console.log('Error entering promo code:', error.message);
+                }
+            }
+
             // Click the search button to proceed to the next page
             try {
                 // Wait for and click the specific search button
