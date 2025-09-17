@@ -559,18 +559,24 @@ async function scrapeHotelData() {
             // Wait for the date selection to be processed
             await new Promise(resolve => setTimeout(resolve, 2000));
 
-            // Enter promo code if one was detected from the modal
-            if (couponData && couponData.promoCode && couponData.promoCode !== 'No promo code found') {
-                try {
-                    const promoInput = await page.$('#search-bar-code');
-                    if (promoInput) {
-                        await promoInput.click();
-                        await promoInput.type(couponData.promoCode);
-                        await new Promise(resolve => setTimeout(resolve, 1000));
+            // Enter promo code - use detected code from modal or default to "RIUEXTRA"
+            try {
+                const promoInput = await page.$('#search-bar-code');
+                if (promoInput) {
+                    // Determine which promo code to use
+                    let promoCodeToUse = 'RIUEXTRA'; // Default promo code
+                    
+                    // Use detected promo code from modal if available and valid
+                    if (couponData && couponData.promoCode && couponData.promoCode !== 'No promo code found') {
+                        promoCodeToUse = couponData.promoCode;
                     }
-                } catch (error) {
-                    // Error entering promo code
+                    
+                    await promoInput.click();
+                    await promoInput.type(promoCodeToUse);
+                    await new Promise(resolve => setTimeout(resolve, 1000));
                 }
+            } catch (error) {
+                // Error entering promo code
             }
 
             // Click the search button to proceed to the next page
